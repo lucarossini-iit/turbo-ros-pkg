@@ -25,9 +25,6 @@
 #include <pcl/filters/passthrough.h>
 #include <pcl/common/common.h>
 
-#include <pcl/filters/impl/box_clipper3D.hpp>
-
-
 #include <visualization_msgs/Marker.h>
 
 #include <pcl/filters/crop_box.h>
@@ -49,13 +46,13 @@ void SelectedPointsPublisher::updateTopic()
     nh_.param("frame_id", tf_frame_, std::string("/base_link"));
     rviz_cloud_topic_ = std::string("/rviz_selected_points");
     real_cloud_topic_ = std::string("/real_selected_points");
-    subs_cloud_topic_ = std::string("/camera/depth_registered/points");
+    subs_cloud_topic_ = std::string("/octomap_point_cloud_centers");
     bb_marker_topic_ = std::string("visualization_marker");
 
-    rviz_selected_pub_ = nh_.advertise<sensor_msgs::PointCloud2>( rviz_cloud_topic_.c_str(), 1 );
+    rviz_selected_pub_ = nh_.advertise<sensor_msgs::PointCloud2>( rviz_cloud_topic_.c_str(), 1, true );
     real_selected_pub_ = nh_.advertise<sensor_msgs::PointCloud2>( real_cloud_topic_.c_str(), 1 );
     partial_pc_pub_ = nh_.advertise<sensor_msgs::PointCloud2>( subs_cloud_topic_.c_str(), 1 );
-    bb_marker_pub_ = nh_.advertise<visualization_msgs::Marker>(bb_marker_topic_.c_str(), 1);
+    bb_marker_pub_ = nh_.advertise<visualization_msgs::Marker>(bb_marker_topic_.c_str(), 1 );
     pc_subs_ =  nh_.subscribe(subs_cloud_topic_.c_str(),1,&SelectedPointsPublisher::PointCloudsCallback, this);
 
     ROS_INFO_STREAM_NAMED("SelectedPointsPublisher.updateTopic", "Publishing rviz selected points on topic " <<  nh_.resolveName (rviz_cloud_topic_) );//<< " with frame_id " << context_->getFixedFrame().toStdString() );
@@ -206,7 +203,7 @@ int SelectedPointsPublisher::_processSelectedAreaAndFindPoints()
     rviz::SelectionManager* sel_manager = context_->getSelectionManager();
     rviz::M_Picked selection = sel_manager->getSelection();
     rviz::PropertyTreeModel *model = sel_manager->getPropertyModel();
-    int num_points = model->rowCount();
+    int num_points = model->columnCount();
     ROS_INFO_STREAM_NAMED( "SelectedPointsPublisher._processSelectedAreaAndFindPoints", "Number of points in the selected area: " << num_points);
 
     // Generate a ros point cloud message with the selected points in rviz
@@ -251,7 +248,7 @@ int SelectedPointsPublisher::_processSelectedAreaAndFindPoints()
         ptr += 4;
         *(float*)ptr = vec.z;
         ptr += 4;
-    }
+    }  
     selected_points_ros.header.stamp = ros::Time::now();
     rviz_selected_pub_.publish( selected_points_ros );
 
@@ -290,8 +287,9 @@ int SelectedPointsPublisher::_processSelectedAreaAndFindPoints()
     // NOTE: Use these two lines and change the following code (templates on PointXYZ instead of PointXYZRGB)
     // if your input cloud is not colored
     // Convert the point cloud from the callback into a xyz point cloud
-    //pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz(new pcl::PointCloud<pcl::PointXYZ>);
-    //pcl::copyPointCloud(*this->current_pc_, *cloud_xyz);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::copyPointCloud(*this->current_pc_, *cloud_xyz);
+
 
     // Vectors for the size of the croping box
     Eigen::Vector4f cb_min(-bb_size_x/2.0, -bb_size_y/2.0, -bb_size_z/2.0, 1.0);
