@@ -205,13 +205,13 @@ int SelectedPointsPublisher::_processSelectedAreaAndFindPoints()
     rviz::PropertyTreeModel *model = sel_manager->getPropertyModel();
     int num_points = model->columnCount();
     ROS_INFO_STREAM_NAMED( "SelectedPointsPublisher._processSelectedAreaAndFindPoints", "Number of points in the selected area: " << num_points);
-
+    
     // Generate a ros point cloud message with the selected points in rviz
     sensor_msgs::PointCloud2 selected_points_ros;
     selected_points_ros.header.frame_id = context_->getFixedFrame().toStdString();
     selected_points_ros.height = 1;
     selected_points_ros.width = num_points;
-    selected_points_ros.point_step = 3 * 4;
+    selected_points_ros.point_step = 4 * 4;
     selected_points_ros.row_step = num_points * selected_points_ros.point_step;
     selected_points_ros.is_dense = false;
     selected_points_ros.is_bigendian = false;
@@ -249,110 +249,112 @@ int SelectedPointsPublisher::_processSelectedAreaAndFindPoints()
         *(float*)ptr = vec.z;
         ptr += 4;
     }  
+    
+    std::cout << "i" << std::endl;
     selected_points_ros.header.stamp = ros::Time::now();
     rviz_selected_pub_.publish( selected_points_ros );
 
     // Convert the ros point cloud message with the selected points into a pcl point cloud
-    pcl::PointCloud<pcl::PointXYZ>::Ptr selected_points_pcl(new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::fromROSMsg(selected_points_ros, *selected_points_pcl);
+//     pcl::PointCloud<pcl::PointXYZ>::Ptr selected_points_pcl(new pcl::PointCloud<pcl::PointXYZ>());
+//     pcl::fromROSMsg(selected_points_ros, *selected_points_pcl);
 
     // Generate an oriented bounding box around the selected points in RVIZ
     // Compute principal direction
-    Eigen::Vector4f centroid;
-    pcl::compute3DCentroid(*selected_points_pcl, centroid);
-    Eigen::Matrix3f covariance;
-    pcl::computeCovarianceMatrixNormalized(*selected_points_pcl, centroid, covariance);
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> eigen_solver(covariance, Eigen::ComputeEigenvectors);
-    Eigen::Matrix3f eigDx = eigen_solver.eigenvectors();
-    eigDx.col(2) = eigDx.col(0).cross(eigDx.col(1));
-
-    // Move the points to the that reference frame
-    Eigen::Matrix4f p2w(Eigen::Matrix4f::Identity());
-    p2w.block<3,3>(0,0) = eigDx.transpose();
-    p2w.block<3,1>(0,3) = -1.f * (p2w.block<3,3>(0,0) * centroid.head<3>());
-    pcl::PointCloud<pcl::PointXYZ> cPoints;
-    pcl::transformPointCloud(*selected_points_pcl, cPoints, p2w);
-
-    pcl::PointXYZ min_pt, max_pt;
-    pcl::getMinMax3D(cPoints, min_pt, max_pt);
-    const Eigen::Vector3f mean_diag = 0.5f*(max_pt.getVector3fMap() + min_pt.getVector3fMap());
-
-    // Final transform and bounding box size
-    const Eigen::Quaternionf qfinal(eigDx);
-    const Eigen::Vector3f tfinal = eigDx*mean_diag + centroid.head<3>();
-    double bb_size_x = max_pt.x - min_pt.x;
-    double bb_size_y = max_pt.y - min_pt.y;
-    double bb_size_z = max_pt.z - min_pt.z;
-
-    // NOTE: Use these two lines and change the following code (templates on PointXYZ instead of PointXYZRGB)
-    // if your input cloud is not colored
-    // Convert the point cloud from the callback into a xyz point cloud
+//     Eigen::Vector4f centroid;
+//     pcl::compute3DCentroid(*selected_points_pcl, centroid);
+//     Eigen::Matrix3f covariance;
+//     pcl::computeCovarianceMatrixNormalized(*selected_points_pcl, centroid, covariance);
+//     Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> eigen_solver(covariance, Eigen::ComputeEigenvectors);
+//     Eigen::Matrix3f eigDx = eigen_solver.eigenvectors();
+//     eigDx.col(2) = eigDx.col(0).cross(eigDx.col(1));
+// 
+//     // Move the points to the that reference frame
+//     Eigen::Matrix4f p2w(Eigen::Matrix4f::Identity());
+//     p2w.block<3,3>(0,0) = eigDx.transpose();
+//     p2w.block<3,1>(0,3) = -1.f * (p2w.block<3,3>(0,0) * centroid.head<3>());
+//     pcl::PointCloud<pcl::PointXYZ> cPoints;
+//     pcl::transformPointCloud(*selected_points_pcl, cPoints, p2w);
+// 
+//     pcl::PointXYZ min_pt, max_pt;
+//     pcl::getMinMax3D(cPoints, min_pt, max_pt);
+//     const Eigen::Vector3f mean_diag = 0.5f*(max_pt.getVector3fMap() + min_pt.getVector3fMap());
+// 
+//     // Final transform and bounding box size
+//     const Eigen::Quaternionf qfinal(eigDx);
+//     const Eigen::Vector3f tfinal = eigDx*mean_diag + centroid.head<3>();
+//     double bb_size_x = max_pt.x - min_pt.x;
+//     double bb_size_y = max_pt.y - min_pt.y;
+//     double bb_size_z = max_pt.z - min_pt.z;
+// 
+//     // NOTE: Use these two lines and change the following code (templates on PointXYZ instead of PointXYZRGB)
+//     // if your input cloud is not colored
+//     // Convert the point cloud from the callback into a xyz point cloud
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::copyPointCloud(*this->current_pc_, *cloud_xyz);
-
-
-    // Vectors for the size of the croping box
-    Eigen::Vector4f cb_min(-bb_size_x/2.0, -bb_size_y/2.0, -bb_size_z/2.0, 1.0);
-    Eigen::Vector4f cb_max(bb_size_x/2.0, bb_size_y/2.0, bb_size_z/2.0, 1.0);
-
-    // We apply the inverse of the transformation of the bounding box to the whole point cloud to boxcrop it (then we do not move the box)
-    Eigen::Affine3f transform = Eigen::Translation3f(tfinal)*qfinal;
-    Eigen::Affine3f transform_inverse = transform.inverse();
-
-    pcl::CropBox<pcl::PointXYZRGB> crop_filter;
-    crop_filter.setTransform(transform_inverse);
-    crop_filter.setMax(cb_max);
-    crop_filter.setMin(cb_min);
-    crop_filter.setKeepOrganized(true);
-    crop_filter.setInputCloud(this->current_pc_);
-
-    pcl::PointIndices::Ptr inliers( new pcl::PointIndices() );
-    crop_filter.filter(inliers->indices);
-
-    this->selected_segment_pc_.reset(new pcl::PointCloud<pcl::PointXYZRGB>);
-
-    extract_indices_filter_.reset(new pcl::ExtractIndices<pcl::PointXYZRGB>());
-    extract_indices_filter_->setIndices(inliers);
-    extract_indices_filter_->setKeepOrganized(true);
-    extract_indices_filter_->setInputCloud(this->current_pc_);
-    this->selected_segment_pc_->header = this->current_pc_->header;
-    extract_indices_filter_->filter(*this->selected_segment_pc_);
-
-    this->num_selected_points_ = inliers->indices.size();
-
-    ROS_INFO_STREAM_NAMED("SelectedPointsPublisher._processSelectedAreaAndFindPoints",
-                          "Real number of points of the point cloud in the selected area (NOT published, NOT added): "<< this->num_selected_points_);
-    ROS_INFO_STREAM_NAMED("SelectedPointsPublisher._processSelectedAreaAndFindPoints",
-                          "\n\tPress '+' to add the current selection to the accumulated point cloud." << std::endl<<
-                          "\tPress 'c' to clear the selection. " <<std::endl<<
-                          "\tPress 'r' to recompute the bounding box with the current inlier points in the bounding box."<< std::endl<<
-                          "\tSelect a different region (or an empty region) to clean this LAST selection.");
+// 
+// 
+//     // Vectors for the size of the croping box
+//     Eigen::Vector4f cb_min(-bb_size_x/2.0, -bb_size_y/2.0, -bb_size_z/2.0, 1.0);
+//     Eigen::Vector4f cb_max(bb_size_x/2.0, bb_size_y/2.0, bb_size_z/2.0, 1.0);
+// 
+//     // We apply the inverse of the transformation of the bounding box to the whole point cloud to boxcrop it (then we do not move the box)
+//     Eigen::Affine3f transform = Eigen::Translation3f(tfinal)*qfinal;
+//     Eigen::Affine3f transform_inverse = transform.inverse();
+// 
+//     pcl::CropBox<pcl::PointXYZRGB> crop_filter;
+//     crop_filter.setTransform(transform_inverse);
+//     crop_filter.setMax(cb_max);
+//     crop_filter.setMin(cb_min);
+//     crop_filter.setKeepOrganized(true);
+//     crop_filter.setInputCloud(this->current_pc_);
+// 
+//     pcl::PointIndices::Ptr inliers( new pcl::PointIndices() );
+//     crop_filter.filter(inliers->indices);
+// 
+//     this->selected_segment_pc_.reset(new pcl::PointCloud<pcl::PointXYZRGB>);
+// 
+//     extract_indices_filter_.reset(new pcl::ExtractIndices<pcl::PointXYZRGB>());
+//     extract_indices_filter_->setIndices(inliers);
+//     extract_indices_filter_->setKeepOrganized(true);
+//     extract_indices_filter_->setInputCloud(this->current_pc_);
+//     this->selected_segment_pc_->header = this->current_pc_->header;
+//     extract_indices_filter_->filter(*this->selected_segment_pc_);
+// 
+//     this->num_selected_points_ = inliers->indices.size();
+// 
+//     ROS_INFO_STREAM_NAMED("SelectedPointsPublisher._processSelectedAreaAndFindPoints",
+//                           "Real number of points of the point cloud in the selected area (NOT published, NOT added): "<< this->num_selected_points_);
+//     ROS_INFO_STREAM_NAMED("SelectedPointsPublisher._processSelectedAreaAndFindPoints",
+//                           "\n\tPress '+' to add the current selection to the accumulated point cloud." << std::endl<<
+//                           "\tPress 'c' to clear the selection. " <<std::endl<<
+//                           "\tPress 'r' to recompute the bounding box with the current inlier points in the bounding box."<< std::endl<<
+//                           "\tSelect a different region (or an empty region) to clean this LAST selection.");
 
     // Publish the bounding box as a rectangular marker
-    visualization_msgs::Marker marker;
-    // Set the frame ID and timestamp.  See the TF tutorials for information on these.
-    marker.header.frame_id = context_->getFixedFrame().toStdString().c_str();
-    marker.header.stamp = ros::Time::now();
-    marker.ns = "basic_shapes";
-    marker.id = 0;
-    marker.type = visualization_msgs::Marker::CUBE;
-    marker.action = visualization_msgs::Marker::ADD;
-    marker.pose.position.x = tfinal.x();
-    marker.pose.position.y = tfinal.y();
-    marker.pose.position.z = tfinal.z();
-    marker.pose.orientation.x = qfinal.x();
-    marker.pose.orientation.y = qfinal.y();
-    marker.pose.orientation.z = qfinal.z();
-    marker.pose.orientation.w = qfinal.w();
-    marker.scale.x = max_pt.x - min_pt.x;
-    marker.scale.y = max_pt.y - min_pt.y;
-    marker.scale.z = max_pt.z - min_pt.z;
-    marker.color.r = 0.0f;
-    marker.color.g = 1.0f;
-    marker.color.b = 0.0f;
-    marker.color.a = 0.5;
-    marker.lifetime = ros::Duration();
-    bb_marker_pub_.publish(marker);
+//     visualization_msgs::Marker marker;
+//     // Set the frame ID and timestamp.  See the TF tutorials for information on these.
+//     marker.header.frame_id = context_->getFixedFrame().toStdString().c_str();
+//     marker.header.stamp = ros::Time::now();
+//     marker.ns = "basic_shapes";
+//     marker.id = 0;
+//     marker.type = visualization_msgs::Marker::CUBE;
+//     marker.action = visualization_msgs::Marker::ADD;
+//     marker.pose.position.x = tfinal.x();
+//     marker.pose.position.y = tfinal.y();
+//     marker.pose.position.z = tfinal.z();
+//     marker.pose.orientation.x = qfinal.x();
+//     marker.pose.orientation.y = qfinal.y();
+//     marker.pose.orientation.z = qfinal.z();
+//     marker.pose.orientation.w = qfinal.w();
+//     marker.scale.x = max_pt.x - min_pt.x;
+//     marker.scale.y = max_pt.y - min_pt.y;
+//     marker.scale.z = max_pt.z - min_pt.z;
+//     marker.color.r = 0.0f;
+//     marker.color.g = 1.0f;
+//     marker.color.b = 0.0f;
+//     marker.color.a = 0.5;
+//     marker.lifetime = ros::Duration();
+//     bb_marker_pub_.publish(marker);
 
     return 0;
 }
